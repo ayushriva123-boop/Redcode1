@@ -207,6 +207,27 @@ export default function App() {
     }
   };
 
+  const handleDeleteChannel = async (channelId: string) => {
+    if (!activeCommunity || !currentUser) return;
+    try {
+      const res = await fetch(`/api/communities/${activeCommunity.id}/channels/${channelId}?userId=${currentUser.id}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setChannels(channels.filter(c => c.id !== channelId));
+        if (activeChannel?.id === channelId) {
+          const remaining = channels.filter(c => c.id !== channelId);
+          setActiveChannel(remaining[0] || null);
+        }
+      } else {
+        alert(data.error || "Failed to delete channel");
+      }
+    } catch (err) {
+      console.error("Channel deletion error:", err);
+    }
+  };
+
   // Server metadata updates
   const handleUpdateCommunity = async (updatedName: string, updatedDesc: string) => {
     if (!activeCommunity) return;
@@ -436,6 +457,8 @@ export default function App() {
           onToggleVoiceDeafen={() => setIsVoiceDeafened(!isVoiceDeafened)}
           isVoiceMuted={isVoiceMuted}
           isVoiceDeafened={isVoiceDeafened}
+          communityMembers={communityMembers}
+          onDeleteChannel={handleDeleteChannel}
         />
       ) : (
         /* DM Channels Sidebar list (matches Discord's Home page layout) */
@@ -517,6 +540,7 @@ export default function App() {
           polls={[]}
           onCreatePoll={async () => {}}
           onVotePoll={async () => {}}
+          voiceStates={globalVoiceStates}
         />
       ) : activeCommunity ? (
         /* Inside server community view */
@@ -564,6 +588,7 @@ export default function App() {
             polls={polls.filter(p => p.channelId === activeChannel.id)}
             onCreatePoll={handleCreatePoll}
             onVotePoll={handleVotePoll}
+            voiceStates={globalVoiceStates}
           />
         ) : (
           /* Fallback view when channels empty */

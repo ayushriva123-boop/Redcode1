@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Channel, Message, User, Poll, Community } from "../types";
-import { Send, Smile, Paperclip, MoreHorizontal, Globe, Trash2, Edit3, MessageSquare, AlertCircle, Sparkles, Languages, Check, X, Orbit, Volume2, Plus, UserCheck, Crown, Shield } from "lucide-react";
+import { Send, Smile, Paperclip, MoreHorizontal, Globe, Trash2, Edit3, MessageSquare, AlertCircle, Sparkles, Languages, Check, X, Orbit, Volume2, Plus, UserCheck, Crown, Shield, Lock, Unlock, Mic, User as UserIcon } from "lucide-react";
 
 interface ChatPanelProps {
   currentUser: User;
@@ -17,6 +17,7 @@ interface ChatPanelProps {
   polls: Poll[];
   onCreatePoll: (question: string, options: string[]) => Promise<void>;
   onVotePoll: (pollId: string, optionIndex: number) => Promise<void>;
+  voiceStates?: any[];
 }
 
 export default function ChatPanel({
@@ -33,12 +34,111 @@ export default function ChatPanel({
   onSendReply,
   polls,
   onCreatePoll,
-  onVotePoll
+  onVotePoll,
+  voiceStates = []
 }: ChatPanelProps) {
   const [inputText, setInputText] = useState("");
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [replyingToMsg, setReplyingToMsg] = useState<Message | null>(null);
+
+  // Mention system states
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionSearch, setMentionSearch] = useState("");
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionCaretPos, setMentionCaretPos] = useState<number>(0);
+  const messageInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Helper to find the word being typed before caret location
+  const getMentionQuery = (text: string, caretPos: number) => {
+    const textBeforeCaret = text.slice(0, caretPos);
+    const matches = textBeforeCaret.match(/(?:^|\s)@([^\s@]*)$/);
+    return matches ? matches[1] : null;
+  };
+
+  const getChannelParticipants = () => {
+    if (!communityMembers) return [];
+    if (activeChannel?.isPrivate) {
+      return communityMembers.filter(m => {
+        const isOwner = m.role === "owner" || (activeCommunity && activeCommunity.ownerId === m.userId);
+        const isStaff = m.role === "admin" || m.role === "moderator";
+        const hasManageChannels = m.permissions && m.permissions.includes("manage_channels");
+        const isSelf = m.userId === currentUser.id;
+        return isOwner || isStaff || hasManageChannels || isSelf;
+      });
+    }
+    return communityMembers;
+  };
+
+  const channelParticipants = getChannelParticipants();
+
+  const filteredMembersForMention = channelParticipants.filter((m: any) => {
+    const search = mentionSearch.toLowerCase();
+    return (
+      (m.displayName || "").toLowerCase().includes(search) ||
+      (m.username || "").toLowerCase().includes(search)
+    );
+  });
+
+  const handleSelectMention = (member: any) => {
+    const textBeforeCaret = inputText.slice(0, mentionCaretPos);
+    const textAfterCaret = inputText.slice(mentionCaretPos);
+
+    const lastAtIndex = textBeforeCaret.lastIndexOf("@");
+    if (lastAtIndex !== -1) {
+      const parenthesizedMention = `@${member.username} `;
+      const newText = textBeforeCaret.slice(0, lastAtIndex) + parenthesizedMention + textAfterCaret;
+      
+      setInputText(newText);
+      setMentionOpen(false);
+      
+      // Focus back and place caret
+      setTimeout(() => {
+        if (messageInputRef.current) {
+          messageInputRef.current.focus();
+          const newPos = lastAtIndex + parenthesizedMention.length;
+          messageInputRef.current.setSelectionRange(newPos, newPos);
+        }
+      }, 0);
+    }
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setInputText(val);
+    (window as any).isTypingRef = true;
+
+    const caretPos = e.target.selectionStart || 0;
+    setMentionCaretPos(caretPos);
+
+    // Detect mention query
+    const query = getMentionQuery(val, caretPos);
+    if (query !== null) {
+      setMentionOpen(true);
+      setMentionSearch(query);
+      setMentionIndex(0);
+    } else {
+      setMentionOpen(false);
+    }
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (mentionOpen && filteredMembersForMention.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((prev) => (prev + 1) % filteredMembersForMention.length);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((prev) => (prev - 1 + filteredMembersForMention.length) % filteredMembersForMention.length);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        handleSelectMention(filteredMembersForMention[mentionIndex]);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionOpen(false);
+      }
+    }
+  };
 
   // File drag & upload simulation states
   const [fileDragging, setFileDragging] = useState(false);
@@ -302,6 +402,13 @@ export default function ChatPanel({
           const displayTime = new Date(msg.timestamp).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
           const isHovered = hoveredMsgId === msg.id;
 
+          const isServerOwner = activeCommunity && activeCommunity.ownerId === currentUser.id;
+          const myMemberObj = communityMembers?.find(m => m.userId === currentUser.id);
+          const isServerStaff = isServerOwner || (myMemberObj && (myMemberObj.role === "owner" || myMemberObj.role === "admin" || myMemberObj.role === "moderator"));
+          const isDMChannel = !activeCommunity && activeChannel?.id?.startsWith("dm-");
+          
+          const canDelete = isMe || isServerStaff || isDMChannel || currentUser.id === "user-alan" || currentUser.id === "user-ai-bot";
+
           return (
             <div
               key={msg.id}
@@ -485,7 +592,7 @@ export default function ChatPanel({
                   )}
 
                   {/* Delete message option */}
-                  {(isMe || currentUser.id === "user-alan" || currentUser.id === "user-ai-bot") && (
+                  {canDelete && (
                     <button
                       onClick={() => onDeleteMessage(msg.id)}
                       className="p-1 text-zinc-400 hover:text-red-500 rounded hover:bg-zinc-850 cursor-pointer"
@@ -547,7 +654,65 @@ export default function ChatPanel({
       )}
 
       {/* Bottom Text Chat composer box on form */}
-      <div className="p-4 bg-zinc-900/20 border-t border-zinc-900 select-none shrink-0">
+      <div className="p-4 bg-zinc-900/20 border-t border-zinc-900 select-none shrink-0 relative">
+        
+        {/* AT/MENTION FLOATING POPUP SELECTION */}
+        {mentionOpen && filteredMembersForMention.length > 0 && (
+          <div className="absolute bottom-full left-4 right-4 mb-2 bg-zinc-950/95 backdrop-blur border border-zinc-800 rounded-xl shadow-2xl overflow-hidden z-40 animate-slide-up max-h-48 flex flex-col">
+            <div className="px-3 py-1.5 bg-zinc-900/50 border-b border-zinc-900 flex items-center justify-between text-[10px] text-zinc-500 font-mono uppercase tracking-wider select-none shrink-0">
+              <span className="font-extrabold text-red-505 tracking-wider">Mention a Member</span>
+              <span className="text-zinc-500 font-mono text-[9px]"> {mentionIndex + 1} of {filteredMembersForMention.length} </span>
+            </div>
+            <div className="overflow-y-auto p-1.5 space-y-0.5 max-h-40 no-scrollbar select-none text-left">
+              {filteredMembersForMention.map((member, idx) => {
+                const isSelected = idx === mentionIndex;
+                const isOwner = member.role === "owner" || (activeCommunity && activeCommunity.ownerId === member.userId);
+                const isAdmin = member.role === "admin";
+                const isMod = member.role === "moderator";
+
+                return (
+                  <div
+                    key={member.userId}
+                    onMouseDown={(e: React.MouseEvent) => {
+                      e.preventDefault();
+                      handleSelectMention(member);
+                    }}
+                    onMouseEnter={() => setMentionIndex(idx)}
+                    className={`flex items-center justify-between px-3 py-1.5 rounded-lg cursor-pointer transition-all duration-150 ${
+                      isSelected ? "bg-red-950/40 border-l-2 border-red-500 pl-2 text-white" : "hover:bg-zinc-850/50 text-zinc-300"
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2 w-full min-w-0">
+                      <div className={`h-6 w-6 rounded-full flex items-center justify-center text-white text-[10px] font-extrabold ${member.avatarColor || "bg-zinc-700"} shrink-0`}>
+                        {member.displayName.substring(0, 2).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0 flex items-baseline space-x-1.5">
+                        <span className="text-xs font-bold truncate">
+                          {member.displayName}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 font-mono truncate">
+                          @{member.username}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="shrink-0 pl-2">
+                      {isOwner ? (
+                        <span className="text-[9px] font-mono bg-red-500/15 text-red-400 border border-red-500/10 px-1 py-0.5 rounded">Owner</span>
+                      ) : isAdmin ? (
+                        <span className="text-[9px] font-mono bg-purple-500/15 text-purple-400 border border-purple-500/10 px-1 py-0.5 rounded">Admin</span>
+                      ) : isMod ? (
+                        <span className="text-[9px] font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/10 px-1 py-0.5 rounded">Mod</span>
+                      ) : (
+                        <span className="text-[9px] font-mono bg-zinc-800 text-zinc-500 border border-zinc-800 px-1 py-0.5 rounded">Member</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSend} className="flex space-x-2">
           {/* File input click triggers */}
           <button
@@ -568,14 +733,12 @@ export default function ChatPanel({
 
           <input
             type="text"
+            ref={messageInputRef}
             className="flex-1 bg-zinc-900 border border-zinc-850 rounded-xl px-4 py-3 text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/10 font-sans"
             placeholder={`Message #${activeChannel.name}...`}
             value={inputText}
-            onChange={(e) => {
-              setInputText(e.target.value);
-              // Send typing ping triggers in background sync loop
-              (window as any).isTypingRef = true;
-            }}
+            onChange={handleInputChange}
+            onKeyDown={handleInputKeyDown}
           />
 
           <button
@@ -709,103 +872,220 @@ export default function ChatPanel({
       </div>
 
       {/* Right column: Server Active Members sidebar */}
-      {activeCommunity && communityMembers && communityMembers.length > 0 && (
-        <div id="redcoad-server-members" className="w-56 bg-zinc-900 border-l border-zinc-950 flex flex-col shrink-0 select-none overflow-hidden h-full">
-          {/* Header */}
-          <div className="h-14 border-b border-zinc-950 px-4 flex items-center bg-zinc-90 w-full font-bold text-zinc-400 text-xs tracking-wider uppercase shrink-0">
-            <span>Members — {communityMembers.length}</span>
-          </div>
+      {activeCommunity && communityMembers && communityMembers.length > 0 && (() => {
+        // Filter participants based on active channel's privacy access
+        const getChannelParticipants = () => {
+          if (!communityMembers) return [];
+          if (activeChannel?.isPrivate) {
+            return communityMembers.filter(m => {
+              const isOwner = m.role === "owner" || (activeCommunity && activeCommunity.ownerId === m.userId);
+              const isStaff = m.role === "admin" || m.role === "moderator";
+              const hasManageChannels = m.permissions && m.permissions.includes("manage_channels");
+              const isSelf = m.userId === currentUser.id;
+              return isOwner || isStaff || hasManageChannels || isSelf;
+            });
+          }
+          return communityMembers;
+        };
 
-          {/* Members Scroller list */}
-          <div className="flex-1 overflow-y-auto px-2 py-4 space-y-4 no-scrollbar text-left">
-            {/* Online Members section */}
-            {(() => {
-              const onlineM = communityMembers.filter(m => m.status && m.status !== "offline");
-              return onlineM.length > 0 ? (
+        const channelParticipants = getChannelParticipants();
+
+        const getUserVoiceState = (userId: string) => {
+          if (!voiceStates) return null;
+          return voiceStates.find(vs => vs.userId === userId && vs.communityId === activeCommunity?.id);
+        };
+
+        const renderParticipantRow = (mObj: any, isOffline = false) => {
+          const isOwner = mObj.role === "owner" || activeCommunity?.ownerId === mObj.userId;
+          const isAdmin = mObj.role === "admin";
+          const isMod = mObj.role === "moderator";
+          
+          const uVoiceState = getUserVoiceState(mObj.userId);
+          const inVoice = !!uVoiceState;
+          const voiceMuted = uVoiceState?.isMuted;
+          const voiceDeafened = uVoiceState?.isDeafened;
+          const screenShare = uVoiceState?.isScreenSharing;
+
+          // Status indication
+          let statusClass = "bg-zinc-600 border-zinc-950";
+          let isPulsing = false;
+          if (!isOffline) {
+            if (mObj.status === "online") {
+              statusClass = "bg-emerald-500 border-zinc-950";
+              isPulsing = true;
+            } else if (mObj.status === "idle") {
+              statusClass = "bg-amber-500 border-zinc-950";
+            } else if (mObj.status === "dnd") {
+              statusClass = "bg-red-500 border-zinc-950";
+            }
+          }
+
+          // Badge configurations
+          let roleText = "Member";
+          let badgeStyle = "bg-zinc-850/60 text-zinc-400 border-zinc-800/10";
+          let RoleIconBadge = UserIcon;
+
+          if (isOwner) {
+            roleText = "Owner";
+            badgeStyle = "bg-red-500/10 text-red-400 border-red-500/20";
+            RoleIconBadge = Crown;
+          } else if (isAdmin) {
+            roleText = "Admin";
+            badgeStyle = "bg-purple-500/10 text-purple-400 border-purple-500/20";
+            RoleIconBadge = Shield;
+          } else if (isMod) {
+            roleText = "Mod";
+            badgeStyle = "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
+            RoleIconBadge = Shield;
+          }
+
+          const textThemeColor = isOwner 
+            ? "text-red-400 font-extrabold" 
+            : isAdmin 
+            ? "text-purple-400 font-extrabold" 
+            : isMod 
+            ? "text-emerald-400 font-extrabold" 
+            : "text-zinc-200 font-semibold";
+
+          return (
+            <div 
+              key={mObj.userId} 
+              className={`flex flex-col p-2 rounded-lg hover:bg-zinc-850/60 border border-transparent hover:border-zinc-800/20 transition-all duration-150 ${
+                isOffline ? "opacity-55 hover:opacity-100" : ""
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                {/* Avatar */}
+                <div className="relative shrink-0">
+                  <div className={`h-8 w-8 rounded-full flex items-center justify-center text-white text-[11px] font-extrabold shadow ${mObj.avatarColor || "bg-zinc-700"}`}>
+                    {mObj.displayName.substring(0, 2).toUpperCase()}
+                  </div>
+                  <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 ${statusClass}`}>
+                    {isPulsing && (
+                      <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
+                    )}
+                  </span>
+                </div>
+
+                {/* Profile detail */}
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="flex items-center justify-between">
+                    <span className={`text-[12px] truncate block ${isOffline ? "text-zinc-500 font-medium" : textThemeColor}`}>
+                      {mObj.displayName}
+                    </span>
+                    
+                    {/* Active call indicator */}
+                    {inVoice && (
+                      <div className="flex items-center space-x-0.5 bg-emerald-950/50 text-emerald-400 text-[8px] font-mono px-1 rounded border border-emerald-900/30 animate-pulse">
+                        <Mic className="h-2 w-2" />
+                        <span>{voiceMuted ? "MUTED" : screenShare ? "LIVE" : "VOICE"}</span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-zinc-500 font-mono block -mt-0.5 truncate">
+                    @{mObj.username}
+                  </span>
+                </div>
+              </div>
+
+              {/* Badges footer */}
+              <div className="mt-1.5 flex flex-wrap gap-1 items-center pl-[38px]">
+                <span className={`flex items-center space-x-1 text-[8px] font-mono uppercase tracking-wider px-1 py-0.5 rounded border font-extrabold ${badgeStyle}`}>
+                  <RoleIconBadge className="h-2.5 w-2.5 shrink-0" />
+                  <span>{roleText}</span>
+                </span>
+
+                {/* Staff tools preview */}
+                {mObj.permissions && mObj.permissions.includes("kick_users") && (
+                  <span className="bg-amber-950/20 text-amber-500 border border-amber-900/20 text-[8px] font-mono uppercase px-1 rounded scale-90" title="Authorized Kicker">
+                    Kick
+                  </span>
+                )}
+                {mObj.permissions && mObj.permissions.includes("manage_messages") && (
+                  <span className="bg-sky-950/20 text-sky-400 border border-sky-900/20 text-[8px] font-mono uppercase px-1 rounded scale-90" title="Chat Overseer">
+                    Purge
+                  </span>
+                )}
+
+                {/* Custom Status */}
+                {mObj.customStatus && (
+                  <span className="text-[9px] text-zinc-400 italic block mt-0.5 w-full truncate leading-none" title={mObj.customStatus}>
+                    "{mObj.customStatus}"
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        };
+
+        const activeStaff = channelParticipants.filter(m => {
+          const isOwner = m.role === "owner" || activeCommunity.ownerId === m.userId;
+          const isStaff = m.role === "admin" || m.role === "moderator";
+          const isOnline = m.status && m.status !== "offline";
+          return (isOwner || isStaff) && isOnline;
+        });
+
+        const activeMembers = channelParticipants.filter(m => {
+          const isOwner = m.role === "owner" || activeCommunity.ownerId === m.userId;
+          const isStaff = m.role === "admin" || m.role === "moderator";
+          const isOnline = m.status && m.status !== "offline";
+          return !(isOwner || isStaff) && isOnline;
+        });
+
+        const offlineParticipants = channelParticipants.filter(m => !m.status || m.status === "offline");
+
+        return (
+          <div id="redcoad-server-members" className="w-56 bg-zinc-900 border-l border-zinc-950 flex flex-col shrink-0 select-none overflow-hidden h-full">
+            {/* Header */}
+            <div className="h-14 border-b border-zinc-950 px-4 flex flex-col justify-center bg-zinc-90 w-full shrink-0">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-zinc-350 text-xs tracking-wider uppercase font-sans">
+                  Participants
+                </span>
+                <span className="bg-zinc-950/80 text-zinc-400 border border-zinc-850/40 text-[9px] font-mono px-1.5 py-0.5 rounded font-bold">
+                  {channelParticipants.length}
+                </span>
+              </div>
+              {activeChannel?.isPrivate && (
+                <div className="flex items-center space-x-1 mt-0.5 text-red-500 text-[9px] font-mono font-bold uppercase tracking-wider select-none scale-95 origin-left">
+                  <Lock className="h-2.5 w-2.5 text-red-500 animate-pulse" />
+                  <span>Restricted Loop</span>
+                </div>
+              )}
+            </div>
+
+            {/* List */}
+            <div className="flex-1 overflow-y-auto px-2 py-4 space-y-4 no-scrollbar text-left scroll-smooth">
+              {activeStaff.length > 0 && (
                 <div className="space-y-1">
-                  <span className="block text-[10px] text-zinc-550 font-mono uppercase tracking-wider pl-2 font-extrabold mb-1">Online — {onlineM.length}</span>
-                  {onlineM.map((mObj) => {
-                    const isOwner = mObj.role === "owner" || activeCommunity.ownerId === mObj.userId;
-                    const isMod = mObj.role === "moderator" || mObj.role === "admin";
-                    return (
-                      <div key={mObj.userId} className="flex items-center space-x-2 px-2 py-1.5 rounded-lg hover:bg-zinc-850/60 transition-colors duration-150">
-                        <div className="relative shrink-0">
-                          <div className={`h-7 w-7 rounded-full flex items-center justify-center text-white text-[11px] font-bold ${mObj.avatarColor || "bg-zinc-700"}`}>
-                            {mObj.displayName.substring(0, 2).toUpperCase()}
-                          </div>
-                          <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-zinc-950 ${
-                            mObj.status === "idle" ? "bg-amber-500" : mObj.status === "dnd" ? "bg-red-500" : "bg-emerald-500"
-                          }`} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center space-x-1">
-                            <span className="text-xs text-zinc-200 font-bold truncate group-hover:text-white">
-                              {mObj.displayName}
-                            </span>
-                            {isOwner && (
-                              <Crown className="h-3 w-3 text-yellow-500 fill-yellow-500/40 shrink-0" title="Server Owner" />
-                            )}
-                            {isMod && !isOwner && (
-                              <Shield className="h-3 w-3 text-red-500 fill-red-500/10 shrink-0" title="Server Staff" />
-                            )}
-                          </div>
-                          {mObj.customStatus && (
-                            <p className="text-[9px] text-zinc-500 truncate mt-0.5" title={mObj.customStatus}>
-                              {mObj.customStatus}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  <span className="block text-[10px] text-zinc-550 font-mono uppercase tracking-wider pl-2 font-extrabold mb-1">
+                    Staff ({activeStaff.length})
+                  </span>
+                  {activeStaff.map(m => renderParticipantRow(m))}
                 </div>
-              ) : null;
-            })()}
+              )}
 
-            {/* Offline Members section */}
-            {(() => {
-              const offlineM = communityMembers.filter(m => !m.status || m.status === "offline");
-              return offlineM.length > 0 ? (
-                <div className="space-y-1 pt-2">
-                  <span className="block text-[10px] text-zinc-550 font-mono uppercase tracking-wider pl-2 font-extrabold mb-1">Offline — {offlineM.length}</span>
-                  {offlineM.map((mObj) => {
-                    const isOwner = mObj.role === "owner" || activeCommunity.ownerId === mObj.userId;
-                    const isMod = mObj.role === "moderator" || mObj.role === "admin";
-                    return (
-                      <div key={mObj.userId} className="flex items-center space-x-2 px-2 py-1.5 rounded-lg opacity-60 hover:opacity-100 hover:bg-zinc-850/30 transition-colors duration-150">
-                        <div className="relative shrink-0">
-                          <div className={`h-7 w-7 rounded-full flex items-center justify-center text-zinc-400 text-[11px] font-bold ${mObj.avatarColor || "bg-zinc-700"}`}>
-                            {mObj.displayName.substring(0, 2).toUpperCase()}
-                          </div>
-                          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-zinc-950 bg-zinc-600" />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center space-x-1">
-                            <span className="text-xs text-zinc-400 font-medium truncate">
-                              {mObj.displayName}
-                            </span>
-                            {isOwner && (
-                              <Crown className="h-3 w-3 text-yellow-500 shrink-0" title="Server Owner" />
-                            )}
-                            {isMod && !isOwner && (
-                              <Shield className="h-3 w-3 text-zinc-600 shrink-0" title="Server Staff" />
-                            )}
-                          </div>
-                          {mObj.customStatus && (
-                            <p className="text-[9px] text-zinc-650 truncate mt-0.5" title={mObj.customStatus}>
-                              {mObj.customStatus}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+              {activeMembers.length > 0 && (
+                <div className="space-y-1">
+                  <span className="block text-[10px] text-zinc-550 font-mono uppercase tracking-wider pl-2 font-extrabold mb-1">
+                    Online Members ({activeMembers.length})
+                  </span>
+                  {activeMembers.map(m => renderParticipantRow(m))}
                 </div>
-              ) : null;
-            })()}
+              )}
+
+              {offlineParticipants.length > 0 && (
+                <div className="space-y-1 pt-2">
+                  <span className="block text-[10px] text-zinc-600 font-mono uppercase tracking-wider pl-2 font-extrabold mb-1">
+                    Offline ({offlineParticipants.length})
+                  </span>
+                  {offlineParticipants.map(m => renderParticipantRow(m, true))}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
     </div>
   );

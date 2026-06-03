@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Community, AuditLog, CommunityEvent, User } from "../types";
 import { AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
-import { Calendar, ShieldAlert, BarChart3, Settings, Users, Plus, AlertCircle, Clock, MapPin, Check, UserCheck } from "lucide-react";
+import { Calendar, ShieldAlert, BarChart3, Settings, Users, Plus, AlertCircle, Clock, MapPin, Check, UserCheck, Shield, Search, UserMinus } from "lucide-react";
 
 interface ServerSettingsProps {
   currentUser: User;
@@ -16,8 +16,97 @@ export default function ServerSettings({
   onUpdateCommunity,
   onClose
 }: ServerSettingsProps) {
-  const [activeTab, setActiveTab] = useState<"general" | "events" | "logs" | "analytics">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "events" | "logs" | "analytics" | "roles">("general");
   
+  // Roles and Permissions state
+  const [members, setMembers] = useState<any[]>([]);
+  const [selectedMember, setSelectedMember] = useState<any | null>(null);
+  const [rolesSearch, setRolesSearch] = useState("");
+  const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
+  const [kickingMemberId, setKickingMemberId] = useState<string | null>(null);
+
+  // Load members on tab activation
+  useEffect(() => {
+    if (activeTab === "roles") {
+      fetchMembers();
+    }
+  }, [activeTab, activeCommunity.id]);
+
+  const fetchMembers = async () => {
+    try {
+      const res = await fetch(`/api/communities/${activeCommunity.id}/members`);
+      const data = await res.json();
+      if (res.ok) {
+        setMembers(data);
+        if (data.length > 0) {
+          setSelectedMember((prev: any) => {
+            const found = data.find((m: any) => m.userId === prev?.userId);
+            return found || data[0];
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Members load error:", err);
+    }
+  };
+
+  const handleSaveMemberPermissions = async (targetUserId: string, role: string, permissions: string[]) => {
+    setSavingMemberId(targetUserId);
+    setStatusMsg(null);
+    try {
+      const res = await fetch(`/api/communities/${activeCommunity.id}/members/${targetUserId}/role-permissions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          role,
+          permissions,
+          updaterId: currentUser.id
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update permissions.");
+      
+      setStatusMsg({ text: `Permissions for member @${selectedMember?.username || 'user'} successfully customized.`, type: "success" });
+      await fetchMembers();
+    } catch (err: any) {
+      setStatusMsg({ text: err.message || "Failed to edit permissions.", type: "error" });
+    } finally {
+      setSavingMemberId(null);
+    }
+  };
+
+  const handleKickMember = async (targetUserId: string) => {
+    if (!window.confirm("Are you sure you want to kick this member from the server?")) {
+      return;
+    }
+    setKickingMemberId(targetUserId);
+    setStatusMsg(null);
+    try {
+      const res = await fetch(`/api/communities/${activeCommunity.id}/members/${targetUserId}?kickerId=${currentUser.id}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to kick member.");
+
+      setStatusMsg({ text: "Member successfully kicked from the server.", type: "success" });
+      setSelectedMember(null);
+      await fetchMembers();
+    } catch (err: any) {
+      setStatusMsg({ text: err.message || "Failed to kick member.", type: "error" });
+    } finally {
+      setKickingMemberId(null);
+    }
+  };
+
+  const filteredMembers = members.filter((m: any) => {
+    const search = rolesSearch.toLowerCase();
+    return (
+      (m.displayName || "").toLowerCase().includes(search) ||
+      (m.username || "").toLowerCase().includes(search) ||
+      (m.role || "").toLowerCase().includes(search)
+    );
+  });
+
   // General config form
   const [name, setName] = useState(activeCommunity.name);
   const [desc, setDesc] = useState(activeCommunity.description);
@@ -184,6 +273,16 @@ export default function ServerSettings({
               >
                 <BarChart3 className="h-4.5 w-4.5" />
                 <span>analytics hub</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab("roles"); setStatusMsg(null); }}
+                className={`w-full flex items-center space-x-2 px-3 py-2.5 rounded transition-colors text-left font-bold shrink-0 cursor-pointer ${
+                  activeTab === "roles" ? "bg-red-950/20 text-red-500 border border-red-900/40" : "text-zinc-450 hover:bg-zinc-850 hover:text-white"
+                }`}
+              >
+                <UserCheck className="h-4.5 w-4.5" />
+                <span>Roles & Permissions</span>
               </button>
             </div>
           </div>
@@ -533,8 +632,336 @@ export default function ServerSettings({
             </div>
           )}
 
+          {/* ROLES & CUSTOM PERMISSIONS CONTROL PANEL PANE */}
+          {activeTab === "roles" && (
+            <div className="space-y-6 animate-fade-in text-left">
+              <div>
+                <h2 className="text-white text-base font-extrabold flex items-center space-x-2">
+                  <UserCheck className="h-5 w-5 text-red-500" />
+                  <span>Roles & Mutual Permissions</span>
+                </h2>
+                <p className="text-zinc-500 text-xs mt-0.5">
+                  Configure server hierarchies, assign staff tiers, or grant specific operational powers like kicking members and purging chat streams.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 min-h-[480px]">
+                
+                {/* Left Side: Members Directory List */}
+                <div className="md:col-span-5 bg-zinc-900 border border-zinc-850 rounded-xl flex flex-col overflow-hidden max-h-[500px]">
+                  <div className="p-3 border-b border-zinc-850 bg-zinc-900/50 flex items-center space-x-2 shrink-0">
+                    <Search className="h-4 w-4 text-zinc-500" />
+                    <input
+                      type="text"
+                      placeholder="Search credentials or roles..."
+                      value={rolesSearch}
+                      onChange={(e) => setRolesSearch(e.target.value)}
+                      className="bg-transparent focus:outline-none text-xs text-white placeholder-zinc-650 w-full"
+                    />
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1 no-scrollbar-y">
+                    {filteredMembers.map((m) => {
+                      const isSel = selectedMember?.userId === m.userId;
+                      const isOwnerRole = m.role === "owner";
+                      const isAdminRole = m.role === "admin";
+                      const isModRole = m.role === "moderator";
+                      
+                      const roleBadgeColor = isOwnerRole 
+                        ? "bg-red-950/40 text-red-400 border border-red-900/30"
+                        : isAdminRole
+                        ? "bg-purple-950/40 text-purple-400 border border-purple-900/30"
+                        : isModRole
+                        ? "bg-emerald-950/40 text-emerald-400 border border-emerald-900/30"
+                        : "bg-zinc-850/60 text-zinc-400 border border-zinc-800/20";
+
+                      return (
+                        <button
+                          key={m.userId}
+                          type="button"
+                          onClick={() => setSelectedMember(m)}
+                          className={`w-full flex items-center justify-between p-2.5 rounded-lg transition-all cursor-pointer text-left ${
+                            isSel ? "bg-zinc-850 border border-zinc-750" : "hover:bg-zinc-850/40 border border-transparent"
+                          }`}
+                        >
+                          <div className="flex items-center space-x-2.5 min-w-0 pr-2">
+                            <div className="relative shrink-0">
+                              <div className={`h-8 w-8 rounded-full flex items-center justify-center text-white text-xs font-mono font-bold uppercase ${m.avatarColor}`}>
+                                {m.username.substring(0, 2)}
+                              </div>
+                              <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-zinc-900 ${
+                                m.status === "online" ? "bg-emerald-500" : m.status === "idle" ? "bg-amber-500" : "bg-zinc-500"
+                              }`} />
+                            </div>
+
+                            <div className="min-w-0">
+                              <span className="text-white text-xs font-bold block truncate">{m.displayName}</span>
+                              <span className="text-zinc-500 text-[10px] font-mono block truncate">@{m.username}</span>
+                            </div>
+                          </div>
+
+                          <span className={`text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded font-bold shrink-0 ${roleBadgeColor}`}>
+                            {m.role}
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    {filteredMembers.length === 0 && (
+                      <div className="py-12 text-center">
+                        <Users className="h-6 w-6 text-zinc-750 mx-auto block mb-1 animate-pulse" />
+                        <span className="text-zinc-600 font-sans text-xs font-bold">No matching members found.</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Side: Configuration Stage */}
+                <div className="md:col-span-7 bg-zinc-900 border border-zinc-850 rounded-xl flex flex-col overflow-hidden max-h-[500px]">
+                  {selectedMember ? (
+                    <PermissionsEditor
+                      selectedMember={selectedMember}
+                      currentUser={currentUser}
+                      activeCommunity={activeCommunity}
+                      members={members}
+                      savingMemberId={savingMemberId}
+                      kickingMemberId={kickingMemberId}
+                      onSave={handleSaveMemberPermissions}
+                      onKick={handleKickMember}
+                    />
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none">
+                      <Shield className="h-10 w-10 text-zinc-800 mb-1 animate-pulse" />
+                      <span className="text-zinc-600 font-sans text-xs font-bold uppercase tracking-wider block">No Member Loaded</span>
+                      <span className="text-zinc-700 text-[10px] max-w-[220px] block mt-1">
+                        Select a record from the user roster on the left column to configure custom permission profiles or purge membership.
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            </div>
+          )}
+
         </div>
 
+      </div>
+
+    </div>
+  );
+}
+
+interface PermissionsEditorProps {
+  selectedMember: any;
+  currentUser: User;
+  activeCommunity: Community;
+  members: any[];
+  savingMemberId: string | null;
+  kickingMemberId: string | null;
+  onSave: (targetUserId: string, role: string, permissions: string[]) => Promise<void>;
+  onKick: (targetUserId: string) => Promise<void>;
+}
+
+function PermissionsEditor({
+  selectedMember,
+  currentUser,
+  activeCommunity,
+  members,
+  savingMemberId,
+  kickingMemberId,
+  onSave,
+  onKick
+}: PermissionsEditorProps) {
+  const isOwner = activeCommunity.ownerId === currentUser.id;
+  const myMemberObj = members.find((m: any) => m.userId === currentUser.id);
+  const myRole = isOwner ? "owner" : (myMemberObj ? myMemberObj.role : "member");
+  const canManageRoles = myRole === "owner" || myRole === "admin";
+
+  const canModifySelected = (member: any) => {
+    if (!canManageRoles) return false;
+    if (member.userId === currentUser.id) return false;
+    if (member.role === "owner" || member.userId === activeCommunity.ownerId) return false;
+    
+    if (myRole === "admin" && (member.role === "admin" || member.role === "owner")) {
+      return false;
+    }
+    return true;
+  };
+
+  const [selectedRoleState, setSelectedRoleState] = useState<string>("member");
+  const [selectedPermsState, setSelectedPermsState] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (selectedMember) {
+      setSelectedRoleState(selectedMember.role || "member");
+      setSelectedPermsState(selectedMember.permissions || []);
+    }
+  }, [selectedMember]);
+
+  const ALL_PERMISSIONS = [
+    {
+      id: "manage_messages",
+      name: "Manage Messages",
+      desc: "Allows deletion of other members' text and announcement messages."
+    },
+    {
+      id: "kick_users",
+      name: "Kick Users",
+      desc: "Instantly disconnect and remove non-staff members from this community."
+    },
+    {
+      id: "manage_channels",
+      name: "Manage Channels",
+      desc: "Permits creation, alteration, and permanent deletion of channels."
+    },
+    {
+      id: "manage_events",
+      name: "Manage Events",
+      desc: "Coordinate and publish active timed events and scheduled assemblies."
+    }
+  ];
+
+  const editable = canModifySelected(selectedMember);
+
+  const handleTogglePerm = (permId: string) => {
+    if (!editable) return;
+    if (selectedPermsState.includes(permId)) {
+      setSelectedPermsState(selectedPermsState.filter(p => p !== permId));
+    } else {
+      setSelectedPermsState([...selectedPermsState, permId]);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col justify-between p-5 space-y-5 no-scrollbar overflow-y-auto">
+      <div className="space-y-5">
+        
+        {/* Profile header */}
+        <div className="flex items-center justify-between border-b border-zinc-850 pb-3">
+          <div className="flex items-center space-x-3">
+            <div className={`h-11 w-11 rounded-full flex items-center justify-center text-white text-sm font-bold uppercase ${selectedMember.avatarColor}`}>
+              {selectedMember.username ? selectedMember.username.substring(0, 2) : "ME"}
+            </div>
+            <div>
+              <div className="flex items-center space-x-2 text-left">
+                <h3 className="text-white text-sm font-extrabold">{selectedMember.displayName}</h3>
+                <span className="bg-zinc-950 px-2 py-0.5 rounded font-mono text-[9px] text-zinc-500 uppercase">
+                  {selectedMember.role}
+                </span>
+              </div>
+              <span className="text-zinc-500 text-xs font-mono block text-left">@{selectedMember.username}</span>
+            </div>
+          </div>
+
+          {!editable && (
+            <div className="bg-amber-950/20 border border-amber-900/30 rounded px-2.5 py-1 text-[10px] text-amber-500 flex items-center space-x-1.5 shrink-0 max-w-[180px]">
+              <Shield className="h-3 w-3 shrink-0" />
+              <span className="truncate">Read-only security access</span>
+            </div>
+          )}
+        </div>
+
+        {/* Staff role assignation cards */}
+        <div className="space-y-2">
+          <span className="block text-[10px] uppercase font-mono text-zinc-400 tracking-wider">Server Role Tier selection</span>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {[
+              { id: "admin", name: "Admin", desc: "Superintendent of server controls", color: "text-purple-400" },
+              { id: "moderator", name: "Moderator", desc: "Monitors and balances forums", color: "text-emerald-400" },
+              { id: "member", name: "Member", desc: "Standard community access level", color: "text-zinc-400" }
+            ].map((rObj) => {
+              const isChecked = selectedRoleState === rObj.id;
+              
+              return (
+                <button
+                  type="button"
+                  key={rObj.id}
+                  disabled={!editable}
+                  onClick={() => setSelectedRoleState(rObj.id)}
+                  className={`p-2.5 rounded-lg border text-left flex flex-col justify-between transition-all select-none ${
+                    isChecked
+                      ? "bg-zinc-950 border-red-500/50 shadow shadow-red-500/5"
+                      : "bg-zinc-950/20 border-zinc-850 hover:bg-zinc-950 hover:border-zinc-800"
+                  } ${!editable ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                >
+                  <div className="flex items-center justify-between w-full">
+                    <span className={`text-xs font-extrabold font-mono ${rObj.color}`}>{rObj.name}</span>
+                    {isChecked && <Check className="h-3.5 w-3.5 text-red-500" />}
+                  </div>
+                  <span className="text-[9px] text-zinc-500 block mt-1 leading-snug">{rObj.desc}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Custom Permissions checklists */}
+        <div className="space-y-2 pt-1">
+          <span className="block text-[10px] uppercase font-mono text-zinc-400 tracking-wider">Custom Granted Permissions</span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {ALL_PERMISSIONS.map((perm) => {
+              const isGranted = selectedPermsState.includes(perm.id);
+
+              return (
+                <div
+                  key={perm.id}
+                  onClick={() => handleTogglePerm(perm.id)}
+                  className={`p-2.5 rounded-lg border text-left flex items-start space-x-2.5 transition-all select-none ${
+                    isGranted
+                      ? "bg-zinc-950 border-zinc-750 font-sans"
+                      : "bg-zinc-950/10 border-zinc-850/55 hover:bg-zinc-950 hover:border-zinc-800 font-sans"
+                  } ${editable ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}
+                >
+                  <div className="pt-0.5 shrink-0">
+                    <div className={`h-4 w-4 rounded border border-zinc-700 flex items-center justify-center transition-all ${
+                      isGranted ? "bg-red-600 border-red-500" : "bg-zinc-900"
+                    }`}>
+                      {isGranted && <Check className="h-3 w-3 text-white" />}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold text-white block">{perm.name}</span>
+                    <span className="text-[9px] text-zinc-500 block leading-tight mt-0.5">{perm.desc}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+      </div>
+
+      {/* Control Panel Action Deck (Danger Zone Included!) */}
+      <div className="border-t border-zinc-850 pt-4 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+        {editable ? (
+          <>
+            {/* Danger Zone: Kick out */}
+            <button
+              type="button"
+              onClick={() => onKick(selectedMember.userId)}
+              disabled={kickingMemberId !== null}
+              className="px-4 py-2 bg-red-950/20 hover:bg-red-950/50 text-red-500 border border-red-900/30 text-xs font-bold uppercase rounded flex items-center space-x-1.5 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+            >
+              <UserMinus className="h-4 w-4" />
+              <span>{kickingMemberId === selectedMember.userId ? "Kicking..." : "Kick Member"}</span>
+            </button>
+
+            {/* Save changes */}
+            <button
+              type="button"
+              disabled={savingMemberId !== null}
+              onClick={() => onSave(selectedMember.userId, selectedRoleState, selectedPermsState)}
+              className="w-full sm:w-auto bg-red-650 hover:bg-red-550 disabled:bg-zinc-800 text-white font-extrabold text-xs uppercase px-5 py-2 rounded shadow tracking-wider transition-colors cursor-pointer"
+            >
+              {savingMemberId === selectedMember.userId ? "Saving..." : "Save Member Permissions"}
+            </button>
+          </>
+        ) : (
+          <span className="text-[10px] text-zinc-550 font-mono italic">
+            Hierarchy security restricts edits to equal/superordinate users.
+          </span>
+        )}
       </div>
 
     </div>

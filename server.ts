@@ -91,6 +91,7 @@ interface CommunityMemberData {
   communityId: string;
   role: "owner" | "admin" | "moderator" | "member";
   joinedAt: string;
+  permissions?: string[];
 }
 
 interface CommunityEventData {
@@ -663,11 +664,24 @@ async function startServer() {
   });
 
   app.post("/api/communities/:id/channels", (req, res) => {
-    const { name, type, categoryId, isPrivate, userId } = req.body;
+    const { name, type, categoryId, isPrivate, userId, creatorId } = req.body;
     const communityId = req.params.id;
+    const authorId = userId || creatorId;
 
     if (!name || !type || !categoryId) {
       return res.status(400).json({ error: "Required fields missing." });
+    }
+
+    const comm = dbData.communities.find(c => c.id === communityId);
+    if (!comm) return res.status(404).json({ error: "Community server missing." });
+
+    const isOwner = comm.ownerId === authorId;
+    const userRoleObj = dbData.members.find(m => m.userId === authorId && m.communityId === communityId);
+    const hasManageChannels = userRoleObj && userRoleObj.permissions && userRoleObj.permissions.includes("manage_channels");
+    const isAuthorized = isOwner || hasManageChannels || (userRoleObj && (userRoleObj.role === "admin" || userRoleObj.role === "moderator"));
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Only server owners and staff can manage channels." });
     }
 
     const cleanName = name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -683,11 +697,45 @@ async function startServer() {
 
     dbData.channels.push(newChan);
 
-    const user = dbData.users.find(u => u.id === userId);
-    addAuditLog(communityId, userId || "system", user ? user.username : "Staff", "CHANNEL_CREATED", `Created channel #${cleanName} (${type})`);
+    const user = dbData.users.find(u => u.id === authorId);
+    addAuditLog(communityId, authorId || "system", user ? user.username : "Staff", "CHANNEL_CREATED", `Created channel #${cleanName} (${type})`);
     saveDatabase();
 
     res.json({ success: true, channel: newChan });
+  });
+
+  app.delete("/api/communities/:id/channels/:channelId", (req, res) => {
+    const { userId } = req.query;
+    const { id: communityId, channelId } = req.params;
+
+    const comm = dbData.communities.find(c => c.id === communityId);
+    if (!comm) return res.status(404).json({ error: "Community server missing." });
+
+    const isOwner = comm.ownerId === userId;
+    const userRoleObj = dbData.members.find(m => m.userId === userId && m.communityId === communityId);
+    const hasManageChannels = userRoleObj && userRoleObj.permissions && userRoleObj.permissions.includes("manage_channels");
+    const isAuthorized = isOwner || hasManageChannels || (userRoleObj && (userRoleObj.role === "admin" || userRoleObj.role === "moderator"));
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Only server owners and staff can delete channels." });
+    }
+
+    const chanIndex = dbData.channels.findIndex(c => c.id === channelId && c.communityId === communityId);
+    if (chanIndex === -1) {
+      return res.status(404).json({ error: "Channel not found." });
+    }
+
+    const deletedChanName = dbData.channels[chanIndex].name;
+    dbData.channels.splice(chanIndex, 1);
+    
+    // Clear orphaned messages
+    dbData.messages = dbData.messages.filter(m => m.channelId !== channelId);
+
+    const user = dbData.users.find(u => u.id === userId);
+    addAuditLog(communityId, (userId as string) || "system", user ? user.username : "Staff", "CHANNEL_DELETED", `Deleted channel #${deletedChanName}`);
+    saveDatabase();
+
+    res.json({ success: true });
   });
 
   app.get("/api/communities/:id/members", (req, res) => {
@@ -705,6 +753,125 @@ async function startServer() {
       };
     });
     res.json(joined);
+  });
+
+  app.post("/api/communities/:id/members/:userId/role-permissions", (req, res) => {
+    const { id: communityId, userId: targetUserId } = req.params;
+    const { role, permissions, updaterId } = req.body;
+
+    const comm = dbData.communities.find(c => c.id === communityId);
+    if (!comm) return res.status(404).json({ error: "Community server missing." });
+
+    // Validate updater
+    const updaterMem = dbData.members.find(m => m.userId === updaterId && m.communityId === communityId);
+    if (!updaterMem && comm.ownerId !== updaterId) {
+      return res.status(403).json({ error: "Unauthorized operation." });
+    }
+
+    const isOwner = comm.ownerId === updaterId;
+    const updaterRole = isOwner ? "owner" : (updaterMem ? updaterMem.role : "member");
+
+    // Only owner or admin can edit roles/permissions
+    if (updaterRole !== "owner" && updaterRole !== "admin") {
+      return res.status(403).json({ error: "Only server owners and admins can assign roles and permissions." });
+    }
+
+    const targetMem = dbData.members.find(m => m.userId === targetUserId && m.communityId === communityId);
+    if (!targetMem) {
+      return res.status(404).json({ error: "Community member not found." });
+    }
+
+    // Role hierarchies
+    const roleValue = { owner: 4, admin: 3, moderator: 2, member: 1 };
+    const myPower = roleValue[updaterRole] || 1;
+    const targetPower = roleValue[targetMem.role] || 1;
+
+    if (myPower <= targetPower && !isOwner) {
+      return res.status(403).json({ error: "You cannot change roles/permissions for members of equal or higher hierarchy." });
+    }
+
+    // Update member role and permissions
+    if (role && targetMem.role !== "owner") {
+      // Prevent assigning "owner"
+      if (role === "owner" && !isOwner) {
+        return res.status(403).json({ error: "Only the active owner can transfer server ownership." });
+      }
+      targetMem.role = role;
+    }
+
+    if (permissions) {
+      targetMem.permissions = permissions;
+    }
+
+    const updaterUser = dbData.users.find(u => u.id === updaterId);
+    const targetUser = dbData.users.find(u => u.id === targetUserId);
+    const targetName = targetUser ? targetUser.username : "User";
+    addAuditLog(communityId, updaterId || "system", updaterUser ? updaterUser.username : "Staff", "MEMBER_PERMS_UPDATED", `Updated @${targetName}'s role to ${targetMem.role} and altered custom permissions.`);
+    
+    saveDatabase();
+    res.json({ success: true, member: targetMem });
+  });
+
+  app.delete("/api/communities/:id/members/:userId", (req, res) => {
+    const { id: communityId, userId: targetUserId } = req.params;
+    const kickerId = req.query.kickerId || req.body.kickerId;
+
+    if (!kickerId) {
+      return res.status(400).json({ error: "Kicker ID context required." });
+    }
+
+    const comm = dbData.communities.find(c => c.id === communityId);
+    if (!comm) return res.status(404).json({ error: "Community server missing." });
+
+    const isOwner = comm.ownerId === kickerId;
+    const kickerMem = dbData.members.find(m => m.userId === kickerId && m.communityId === communityId);
+    if (!kickerMem && !isOwner) {
+      return res.status(403).json({ error: "Kicker is not a member of this server." });
+    }
+
+    const kickerRole = isOwner ? "owner" : (kickerMem ? kickerMem.role : "member");
+    const hasKickPermission = kickerMem && kickerMem.permissions && kickerMem.permissions.includes("kick_users");
+
+    // Must be Owner, Admin/Mod, or have kick_users permission
+    const canKickAction = isOwner || hasKickPermission || kickerRole === "admin" || kickerRole === "moderator";
+    if (!canKickAction) {
+      return res.status(403).json({ error: "You do not have permission to kick users from this server." });
+    }
+
+    const targetMemIndex = dbData.members.findIndex(m => m.userId === targetUserId && m.communityId === communityId);
+    if (targetMemIndex === -1) {
+      return res.status(404).json({ error: "Target member not found in this community." });
+    }
+
+    const targetMem = dbData.members[targetMemIndex];
+    if (targetMem.role === "owner" || comm.ownerId === targetUserId) {
+      return res.status(403).json({ error: "You cannot kick the server owner." });
+    }
+
+    // Role hierarchies
+    const roleValue = { owner: 4, admin: 3, moderator: 2, member: 1 };
+    const myPower = roleValue[kickerRole] || 1;
+    const targetPower = roleValue[targetMem.role] || 1;
+
+    if (myPower <= targetPower && !isOwner) {
+      return res.status(403).json({ error: "You cannot kick members with an equal or higher role hierarchy." });
+    }
+
+    const targetUser = dbData.users.find(u => u.id === targetUserId);
+    const targetName = targetUser ? targetUser.username : "User";
+    const kickerUser = dbData.users.find(u => u.id === kickerId);
+
+    // Splice member
+    dbData.members.splice(targetMemIndex, 1);
+
+    // Create Audit Log
+    addAuditLog(communityId, kickerId || "system", kickerUser ? kickerUser.username : "Staff", "MEMBER_KICKED", `Kicked @${targetName} from the server.`);
+    
+    // Remove from active voice room states if they are in this community's voice rooms
+    activeVoiceStates = activeVoiceStates.filter(vs => !(vs.userId === targetUserId && vs.communityId === communityId));
+
+    saveDatabase();
+    res.json({ success: true });
   });
 
   app.get("/api/communities/:id/audit-logs", (req, res) => {
@@ -983,8 +1150,38 @@ async function startServer() {
     if (msgIndex === -1) return res.status(404).json({ error: "Message missing." });
     
     const msg = dbData.messages[msgIndex];
-    if (msg.userId !== userId && userId !== "user-ai-bot" && userId !== "user-alan") {
-      return res.status(403).json({ error: "Unauthorized message deletion action." });
+    let isAuthorized = msg.userId === userId;
+
+    if (!isAuthorized && userId) {
+      if (msg.channelId.startsWith("dm-")) {
+        const frId = msg.channelId.substring(3);
+        const frObj = dbData.friends.find(f => f.id === frId);
+        if (frObj && (frObj.userId === userId || frObj.friendId === userId)) {
+          isAuthorized = true;
+        }
+      } else {
+        const chan = dbData.channels.find(c => c.id === msg.channelId);
+        if (chan && chan.communityId) {
+          const comm = dbData.communities.find(c => c.id === chan.communityId);
+          if (comm && comm.ownerId === userId) {
+            isAuthorized = true;
+          } else {
+            const mObj = dbData.members.find(m => m.userId === userId && m.communityId === chan.communityId);
+            const hasManageMessages = mObj && mObj.permissions && mObj.permissions.includes("manage_messages");
+            if (mObj && (mObj.role === "admin" || mObj.role === "moderator" || hasManageMessages)) {
+              isAuthorized = true;
+            }
+          }
+        }
+      }
+    }
+
+    if (userId === "user-ai-bot" || userId === "user-alan") {
+      isAuthorized = true;
+    }
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Unauthorized: message deletion action not allowed." });
     }
 
     dbData.messages.splice(msgIndex, 1);
@@ -1032,6 +1229,18 @@ async function startServer() {
 
     if (!title || !startTime || !location || !creatorId) {
       return res.status(400).json({ error: "Missing required parameters." });
+    }
+
+    const comm = dbData.communities.find(c => c.id === communityId);
+    if (!comm) return res.status(404).json({ error: "Community server missing." });
+
+    const isOwner = comm.ownerId === creatorId;
+    const mObj = dbData.members.find(m => m.userId === creatorId && m.communityId === communityId);
+    const hasManageEvents = mObj && mObj.permissions && mObj.permissions.includes("manage_events");
+    const isAuthorized = isOwner || hasManageEvents || (mObj && (mObj.role === "admin" || mObj.role === "moderator"));
+
+    if (!isAuthorized) {
+      return res.status(403).json({ error: "Only server owners and staff with permission can publish events." });
     }
 
     const newEvt: CommunityEventData = {

@@ -95,6 +95,7 @@ export interface CommunityMember {
   communityId: string;
   role: "owner" | "admin" | "moderator" | "member";
   joinedAt: string;
+  permissions?: string[];
 }
 
 export interface CommunityEvent {

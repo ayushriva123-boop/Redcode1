@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Community, Channel, User, VoiceState } from "../types";
-import { Hash, MessageSquare, Volume2, Plus, Settings, Calendar, Users, Eye, EyeOff, ShieldCheck, HelpCircle, Mic, MicOff, Headphones, Megaphone } from "lucide-react";
+import { Hash, MessageSquare, Volume2, Plus, Settings, Calendar, Users, Eye, EyeOff, ShieldCheck, HelpCircle, Mic, MicOff, Headphones, Megaphone, Trash2 } from "lucide-react";
 
 interface SidebarChannelsProps {
   currentUser: User;
@@ -16,6 +16,8 @@ interface SidebarChannelsProps {
   onToggleVoiceDeafen: () => void;
   isVoiceMuted: boolean;
   isVoiceDeafened: boolean;
+  communityMembers?: any[];
+  onDeleteChannel?: (channelId: string) => Promise<void>;
 }
 
 export default function SidebarChannels({
@@ -31,12 +33,18 @@ export default function SidebarChannels({
   onToggleVoiceMic,
   onToggleVoiceDeafen,
   isVoiceMuted,
-  isVoiceDeafened
+  isVoiceDeafened,
+  communityMembers = [],
+  onDeleteChannel
 }: SidebarChannelsProps) {
   const [showChannelModal, setShowChannelModal] = useState(false);
   const [targetCategoryId, setTargetCategoryId] = useState("");
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelType, setNewChannelType] = useState<"text" | "voice" | "announcement">("text");
+
+  const isServerOwner = activeCommunity.ownerId === currentUser.id;
+  const myMemberObj = communityMembers?.find(m => m.userId === currentUser.id);
+  const isServerStaff = isServerOwner || (myMemberObj && (myMemberObj.role === "owner" || myMemberObj.role === "admin" || myMemberObj.role === "moderator"));
 
   const handleChannelSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,13 +79,15 @@ export default function SidebarChannels({
         </div>
 
         {/* Community settings toggle */}
-        <button
-          onClick={onOpenSettings}
-          className="p-1 px-1.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition-colors cursor-pointer group"
-          title="Community Panel & Discovery Settings"
-        >
-          <Settings className="h-4.5 w-4.5 group-hover:rotate-45 transition-transform duration-200" />
-        </button>
+        {isServerStaff && (
+          <button
+            onClick={onOpenSettings}
+            className="p-1 px-1.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition-colors cursor-pointer group"
+            title="Community Panel & Discovery Settings"
+          >
+            <Settings className="h-4.5 w-4.5 group-hover:rotate-45 transition-transform duration-200" />
+          </button>
+        )}
       </div>
 
       {/* Categories and Channels list */}
@@ -94,20 +104,22 @@ export default function SidebarChannels({
             {/* Category header title */}
             <div className="flex items-center justify-between text-zinc-400 px-1 py-1 font-semibold text-[11px] font-sans uppercase tracking-wider">
               <span>{cat.name}</span>
-              <button
-                onClick={() => {
-                  setTargetCategoryId(cat.id);
-                  setShowChannelModal(true);
-                }}
-                className="text-zinc-500 hover:text-white transition-colors cursor-pointer"
-                title={`Create channel in ${cat.name}`}
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
+              {isServerStaff && (
+                <button
+                  onClick={() => {
+                    setTargetCategoryId(cat.id);
+                    setShowChannelModal(true);
+                  }}
+                  className="text-zinc-500 hover:text-white transition-colors cursor-pointer"
+                  title={`Create channel in ${cat.name}`}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
 
             {/* Channels within category */}
-            <div className="space-y-0.5">
+            <div className="space-y-1">
               {(chanMap[cat.id] || []).length === 0 ? (
                 <span className="block text-[10px] text-zinc-650 italic pl-5 py-1">No channels yet</span>
               ) : (
@@ -116,36 +128,49 @@ export default function SidebarChannels({
                   
                   return (
                     <div key={chan.id} className="space-y-0.5">
-                      <button
-                        onClick={() => onSelectChannel(chan)}
-                        className={`w-full flex items-center justify-between text-xs px-2.5 py-1.5 rounded transition-all cursor-pointer text-left ${
-                          isSelected
-                            ? "bg-zinc-800 text-white font-semibold"
-                            : "text-zinc-450 hover:bg-zinc-850/60 hover:text-zinc-200"
-                        }`}
-                      >
-                        <div className="flex items-center space-x-2 truncate">
-                          {chan.type === "text" && <Hash className="h-4 w-4 shrink-0 text-zinc-500" />}
-                          {chan.type === "announcement" && <Megaphone className="h-4 w-4 shrink-0 text-red-500/80" />}
-                          {chan.type === "voice" && <Volume2 className="h-4 w-4 shrink-0 text-zinc-500" />}
-                          <span className="truncate">{chan.name}</span>
-                        </div>
-                        {chan.isPrivate && <EyeOff className="h-3 w-3 text-zinc-600" />}
-                      </button>
+                      <div className={`group/chan relative flex items-center justify-between w-full rounded hover:bg-zinc-850/40 text-zinc-450 hover:text-zinc-200 transition-all duration-150 ${isSelected ? "bg-zinc-800 text-white font-semibold" : ""}`}>
+                        <button
+                          onClick={() => onSelectChannel(chan)}
+                          className="flex-1 flex items-center justify-between text-xs px-2.5 py-1.5 cursor-pointer text-left truncate"
+                        >
+                          <div className="flex items-center space-x-2 truncate">
+                            {chan.type === "text" && <Hash className="h-4 w-4 shrink-0 text-zinc-500" />}
+                            {chan.type === "announcement" && <Megaphone className="h-4 w-4 shrink-0 text-red-500/80" />}
+                            {chan.type === "voice" && <Volume2 className="h-4 w-4 shrink-0 text-zinc-500" />}
+                            <span className="truncate">{chan.name}</span>
+                          </div>
+                          {chan.isPrivate && <EyeOff className="h-3 w-3 text-zinc-650 shrink-0" />}
+                        </button>
+
+                        {isServerStaff && onDeleteChannel && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm(`Are you sure you want to delete channel #${chan.name}?`)) {
+                                onDeleteChannel(chan.id);
+                              }
+                            }}
+                            className="opacity-0 group-hover/chan:opacity-100 p-1 mr-1 text-zinc-500 hover:text-red-500 rounded hover:bg-zinc-850 transition-all cursor-pointer shrink-0"
+                            title="Delete Channel"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
 
                       {/* Real-time Voice Room participants inline nested */}
                       {chan.type === "voice" && (
-                        <div className="pl-6 pr-2 space-y-1 py-0.5 border-l border-zinc-850/60 ml-4 mb-1">
+                        <div className="pl-6 pr-2 space-y-1 py-0.5 border-l border-zinc-850/60 ml-4 mb-2">
                           {getVoiceUsers(chan.id).map((vMember) => (
                             <div
                               key={vMember.userId}
-                              className="flex items-center justify-between bg-zinc-950/20 px-2 py-0.5 rounded text-[10px] text-zinc-450 font-mono animate-fade-in border border-transparent hover:border-zinc-800/30"
+                              className="flex items-center justify-between bg-zinc-950/25 px-2 py-0.5 rounded text-[10px] text-zinc-450 font-mono animate-fade-in border border-transparent hover:border-zinc-800/30"
                             >
                               <div className="flex items-center space-x-1.5 truncate">
                                 <span className={`h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0 ${vMember.isCameraOn ? "animate-pulse" : ""}`}></span>
-                                <span className="truncate text-zinc-300">@{vMember.username}</span>
+                                <span className="truncate text-zinc-300 text-[10px]/snug">@{vMember.username}</span>
                               </div>
-                              <div className="flex items-center space-x-1 text-zinc-600 shrink-0">
+                              <div className="flex items-center space-x-1 text-zinc-650 shrink-0">
                                 {vMember.isMuted && <MicOff className="h-2.5 w-2.5 text-red-500/80" />}
                                 {vMember.isScreenSharing && (
                                   <span className="bg-red-950/60 border border-red-900/60 px-1 py-[1px] text-[8px] text-red-400 font-bold uppercase rounded scale-90">Live</span>
@@ -154,7 +179,7 @@ export default function SidebarChannels({
                             </div>
                           ))}
                           {getVoiceUsers(chan.id).length === 0 && (
-                            <span className="text-[9px] text-zinc-650 block italic">Empty lobby</span>
+                            <span className="text-[9px] text-zinc-650 block italic pl-2">Empty lobby</span>
                           )}
                         </div>
                       )}
