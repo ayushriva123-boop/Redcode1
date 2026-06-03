@@ -29,6 +29,7 @@ export default function App() {
   const [friends, setFriends] = useState<Friend[]>([]);
   const [polls, setPolls] = useState<Poll[]>([]);
   const [activeTypingUsers, setActiveTypingUsers] = useState<{ userId: string; username: string }[]>([]);
+  const [communityMembers, setCommunityMembers] = useState<any[]>([]);
 
   // Panels configs
   const [showSettings, setShowSettings] = useState(false);
@@ -81,10 +82,10 @@ export default function App() {
           (window as any).isTypingRef = false;
         }
 
-        const payload = {
+         const payload = {
           userId: currentUser.id,
           activeCommunityId: activeCommunity?.id || null,
-          activeChannelId: activeChannel?.id || null,
+          activeChannelId: activeChannel?.id || (selectedPrivateFriendChat ? `dm-${selectedPrivateFriendChat.id}` : null),
           connectedVoiceChannelId: connectedVoiceChannelId || null,
           isMuted: isVoiceMuted,
           isDeafened: isVoiceDeafened,
@@ -109,6 +110,7 @@ export default function App() {
         if (data.messages) setMessages(data.messages);
         if (data.voiceStates) setGlobalVoiceStates(data.voiceStates);
         if (data.friends) setFriends(data.friends);
+        if (data.members) setCommunityMembers(data.members);
         if (data.activeTypingUsers) setActiveTypingUsers(data.activeTypingUsers);
         if (data.polls) setPolls(data.polls);
 
@@ -503,6 +505,8 @@ export default function App() {
             isPrivate: true,
             description: `Secure end-to-end encrypted direct discussion log with @${selectedPrivateFriendChat.username}.`
           }}
+          activeCommunity={null}
+          communityMembers={[]}
           messages={messages}
           activeTypingUsers={activeTypingUsers}
           onSendMessage={handleSendMessage}
@@ -548,6 +552,8 @@ export default function App() {
           <ChatPanel
             currentUser={currentUser}
             activeChannel={activeChannel}
+            activeCommunity={activeCommunity}
+            communityMembers={communityMembers}
             messages={messages}
             activeTypingUsers={activeTypingUsers}
             onSendMessage={handleSendMessage}

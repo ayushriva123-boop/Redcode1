@@ -1348,6 +1348,24 @@ async function startServer() {
       };
     });
 
+    // Load members for active community
+    let activeCommunityMembers: any[] = [];
+    if (targetCommunityId) {
+      const items = dbData.members.filter(m => m.communityId === targetCommunityId);
+      activeCommunityMembers = items.map(m => {
+        const user = dbData.users.find(u => u.id === m.userId);
+        return {
+          ...m,
+          displayName: user ? user.displayName : "Unknown User",
+          username: user ? user.username : "deleted",
+          avatarColor: user ? user.avatarColor : "bg-gradient-to-tr from-zinc-700 to-zinc-800",
+          avatarUrl: user ? user.avatarUrl : undefined,
+          status: user ? user.status : "offline",
+          customStatus: user ? user.customStatus : ""
+        };
+      });
+    }
+
     // Build immediate synchronization feedback package
     const responsePayload = {
       timestamp: new Date().toISOString(),
@@ -1359,6 +1377,7 @@ async function startServer() {
       channels: activeChans,
       messages: activeMsgs,
       friends: userFriends,
+      members: activeCommunityMembers,
       updatedUser: current,
       polls: activeChannelId ? dbData.polls.filter(p => p.channelId === activeChannelId) : []
     };

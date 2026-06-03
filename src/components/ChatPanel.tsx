@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Channel, Message, User, Poll } from "../types";
-import { Send, Smile, Paperclip, MoreHorizontal, Globe, Trash2, Edit3, MessageSquare, AlertCircle, Sparkles, Languages, Check, X, Orbit, Volume2, Plus, UserCheck } from "lucide-react";
+import { Channel, Message, User, Poll, Community } from "../types";
+import { Send, Smile, Paperclip, MoreHorizontal, Globe, Trash2, Edit3, MessageSquare, AlertCircle, Sparkles, Languages, Check, X, Orbit, Volume2, Plus, UserCheck, Crown, Shield } from "lucide-react";
 
 interface ChatPanelProps {
   currentUser: User;
   activeChannel: Channel;
+  activeCommunity?: Community | null;
+  communityMembers?: any[];
   messages: Message[];
   activeTypingUsers: { userId: string; username: string }[];
   onSendMessage: (text: string, attachment?: any) => Promise<void>;
@@ -20,6 +22,8 @@ interface ChatPanelProps {
 export default function ChatPanel({
   currentUser,
   activeChannel,
+  activeCommunity,
+  communityMembers = [],
   messages,
   activeTypingUsers,
   onSendMessage,
@@ -182,15 +186,16 @@ export default function ChatPanel({
   };
 
   return (
-    <div
-      id="redcoad-chat-workspace"
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-      className={`flex-1 bg-zinc-950 flex flex-col items-stretch overflow-hidden relative select-text ${
-        fileDragging ? "brightness-50 border-2 border-dashed border-red-500 rounded-lg" : ""
-      }`}
-    >
+    <div className="flex-1 flex flex-row h-full w-full items-stretch overflow-hidden">
+      <div
+        id="redcoad-chat-workspace"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        className={`flex-1 bg-zinc-950 flex flex-col items-stretch overflow-hidden relative select-text ${
+          fileDragging ? "brightness-50 border-2 border-dashed border-red-500 rounded-lg" : ""
+        }`}
+      >
       {/* Drag & Drop Visual overlay shield */}
       {fileDragging && (
         <div className="absolute inset-0 bg-black/75 flex flex-col items-center justify-center p-6 text-center select-none z-50 animate-fade-in pointer-events-none">
@@ -316,6 +321,9 @@ export default function ChatPanel({
                   <span className={`text-xs font-bold leading-none ${msg.userId === 'user-ai-bot' ? 'text-red-500 font-extrabold' : 'text-white'}`}>
                     {msg.userDisplayName}
                   </span>
+                  {activeCommunity && activeCommunity.ownerId === msg.userId && (
+                    <Crown className="inline h-3 w-3 text-yellow-500 fill-yellow-500/40 shrink-0 ml-0.5" title="Server Owner" />
+                  )}
                   <span className="text-[10px] font-mono text-zinc-600 select-none">
                     {displayTime}
                   </span>
@@ -694,6 +702,107 @@ export default function ChatPanel({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      </div>
+
+      {/* Right column: Server Active Members sidebar */}
+      {activeCommunity && communityMembers && communityMembers.length > 0 && (
+        <div id="redcoad-server-members" className="w-56 bg-zinc-900 border-l border-zinc-950 flex flex-col shrink-0 select-none overflow-hidden h-full">
+          {/* Header */}
+          <div className="h-14 border-b border-zinc-950 px-4 flex items-center bg-zinc-90 w-full font-bold text-zinc-400 text-xs tracking-wider uppercase shrink-0">
+            <span>Members — {communityMembers.length}</span>
+          </div>
+
+          {/* Members Scroller list */}
+          <div className="flex-1 overflow-y-auto px-2 py-4 space-y-4 no-scrollbar text-left">
+            {/* Online Members section */}
+            {(() => {
+              const onlineM = communityMembers.filter(m => m.status && m.status !== "offline");
+              return onlineM.length > 0 ? (
+                <div className="space-y-1">
+                  <span className="block text-[10px] text-zinc-550 font-mono uppercase tracking-wider pl-2 font-extrabold mb-1">Online — {onlineM.length}</span>
+                  {onlineM.map((mObj) => {
+                    const isOwner = mObj.role === "owner" || activeCommunity.ownerId === mObj.userId;
+                    const isMod = mObj.role === "moderator" || mObj.role === "admin";
+                    return (
+                      <div key={mObj.userId} className="flex items-center space-x-2 px-2 py-1.5 rounded-lg hover:bg-zinc-850/60 transition-colors duration-150">
+                        <div className="relative shrink-0">
+                          <div className={`h-7 w-7 rounded-full flex items-center justify-center text-white text-[11px] font-bold ${mObj.avatarColor || "bg-zinc-700"}`}>
+                            {mObj.displayName.substring(0, 2).toUpperCase()}
+                          </div>
+                          <span className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-zinc-950 ${
+                            mObj.status === "idle" ? "bg-amber-500" : mObj.status === "dnd" ? "bg-red-500" : "bg-emerald-500"
+                          }`} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-1">
+                            <span className="text-xs text-zinc-200 font-bold truncate group-hover:text-white">
+                              {mObj.displayName}
+                            </span>
+                            {isOwner && (
+                              <Crown className="h-3 w-3 text-yellow-500 fill-yellow-500/40 shrink-0" title="Server Owner" />
+                            )}
+                            {isMod && !isOwner && (
+                              <Shield className="h-3 w-3 text-red-500 fill-red-500/10 shrink-0" title="Server Staff" />
+                            )}
+                          </div>
+                          {mObj.customStatus && (
+                            <p className="text-[9px] text-zinc-500 truncate mt-0.5" title={mObj.customStatus}>
+                              {mObj.customStatus}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null;
+            })()}
+
+            {/* Offline Members section */}
+            {(() => {
+              const offlineM = communityMembers.filter(m => !m.status || m.status === "offline");
+              return offlineM.length > 0 ? (
+                <div className="space-y-1 pt-2">
+                  <span className="block text-[10px] text-zinc-550 font-mono uppercase tracking-wider pl-2 font-extrabold mb-1">Offline — {offlineM.length}</span>
+                  {offlineM.map((mObj) => {
+                    const isOwner = mObj.role === "owner" || activeCommunity.ownerId === mObj.userId;
+                    const isMod = mObj.role === "moderator" || mObj.role === "admin";
+                    return (
+                      <div key={mObj.userId} className="flex items-center space-x-2 px-2 py-1.5 rounded-lg opacity-60 hover:opacity-100 hover:bg-zinc-850/30 transition-colors duration-150">
+                        <div className="relative shrink-0">
+                          <div className={`h-7 w-7 rounded-full flex items-center justify-center text-zinc-400 text-[11px] font-bold ${mObj.avatarColor || "bg-zinc-700"}`}>
+                            {mObj.displayName.substring(0, 2).toUpperCase()}
+                          </div>
+                          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border border-zinc-950 bg-zinc-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-1">
+                            <span className="text-xs text-zinc-400 font-medium truncate">
+                              {mObj.displayName}
+                            </span>
+                            {isOwner && (
+                              <Crown className="h-3 w-3 text-yellow-500 shrink-0" title="Server Owner" />
+                            )}
+                            {isMod && !isOwner && (
+                              <Shield className="h-3 w-3 text-zinc-600 shrink-0" title="Server Staff" />
+                            )}
+                          </div>
+                          {mObj.customStatus && (
+                            <p className="text-[9px] text-zinc-650 truncate mt-0.5" title={mObj.customStatus}>
+                              {mObj.customStatus}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null;
+            })()}
           </div>
         </div>
       )}
