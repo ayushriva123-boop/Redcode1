@@ -1,0 +1,6 @@
+{
+  "name": "REDCOAD",
+  "description": "Futuristic Real-Time Community & Communication Platform",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
